@@ -1,433 +1,1489 @@
-<!doctype html>
+﻿<!DOCTYPE html>
 <html lang="zh-Hant">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CoreTemp CSV Viewer (Serverless)</title>
-    <style>
-      :root {
-        color-scheme: dark light;
-        /* VS Code–like dark palette */
-        --bg: #1e1e1e;
-        --panel: #252526;
-        --muted: #9da5b4;
-        --fg: #d4d4d4;
-        --accent: #569cd6; /* VS Code blue */
-        --warn: #d7ba7d;
-        --danger: #f14c4c;
-        --border: #3c3c3c;
-        --chip: #2a2a2a;
-        --radius: 12px;
-        --font: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, sans-serif;
-        /* Chart auxiliary */
-        --chart-grid: #2e2e2e;
-        --chart-axis: #5a5a5a;
-        --chart-dim: rgba(30,30,30,.55);
-        --chart-tip-bg: #2b2b2c;
-        --chart-tip-stroke: #3c3c3c;
-        --chart-marker: #1e1e1e;
-      }
-      * { box-sizing: border-box }
-      html, body { height: 100% }
-      body { margin: 0; padding: 20px; font-family: var(--font); background: var(--bg); color: var(--fg); }
-      .app { max-width: 1200px; margin: 0 auto; }
-      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0,0,0,.35); padding: 14px 16px; }
-      header { display: grid; gap: 10px; align-items: center; grid-template-columns: auto 1fr; margin-bottom: 14px; }
-      .title { display: flex; flex-direction: column; gap: 4px }
-      .title h1 { font-size: 18px; margin: 0; letter-spacing: .02em }
-      .title small { color: var(--muted) }
-      .controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end }
-      .group { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px }
-      button, select, input[type=number] { background: var(--chip); color: var(--fg); border: 1px solid var(--border); border-radius: 999px; font-size: 12px; padding: 6px 10px; min-height: 30px; }
-      button { cursor: pointer }
-      button.primary { border-color: rgba(86,156,214,.5); box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 0 12px rgba(86,156,214,.2) }
-      button:disabled { opacity: .6; cursor: not-allowed }
-      main.panel { padding: 12px }
-      .chart-wrap { height: 420px; position: relative }
-      canvas { width: 100% !important; height: 100% !important; display: block; cursor: crosshair }
-      .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap }
-      .chips { display: flex; gap: 6px; flex-wrap: wrap; max-height: 96px; overflow: auto; padding-right: 4px }
-      .chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--chip); color: var(--muted); font-size: 12px }
-      .swatch { width: 10px; height: 10px; border-radius: 999px; box-shadow: 0 0 0 2px var(--panel) inset, 0 0 0 1px var(--border) }
-      .chip input { width: 14px; height: 14px; accent-color: var(--accent) }
-      .status { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap }
-      .pill { border: 1px solid var(--border); background: var(--chip); border-radius: 999px; padding: 3px 8px; display: inline-flex; gap: 6px; align-items: center }
-      .dot { width: 6px; height: 6px; border-radius: 999px }
-      .dot.ok { background: #22c55e }
-      .dot.off { background: #6b7280 }
-      .dot.err { background: #ef4444 }
-      .err { color: #fca5a5 }
-      @media (max-width: 768px) { .chart-wrap{ height: 320px } body{ padding: 12px } }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <div class="panel">
-        <header>
-          <div class="title">
-            <h1>CoreTemp Log 圖表（純前端）</h1>
-            <small>* 數值自動 ÷ 1000，單位：°C</small>
-          </div>
-          <div class="controls">
-            <div class="group">
-              <span>資料夾</span>
-              <button id="btnPickDir">選擇資料夾</button>
-              <span id="lblDir" style="max-width:260px; overflow:hidden; text-overflow:ellipsis"></span>
-            </div>
-            <div class="group">
-              <span>多檔</span>
-              <button id="btnPickFiles">選擇 CSV</button>
-              <span id="lblFiles" style="max-width:260px; overflow:hidden; text-overflow:ellipsis"></span>
-            </div>
-            <div class="group">
-              <span>Log</span>
-              <select id="selLog" disabled></select>
-            </div>
-            <div class="group">
-              <label style="display:inline-flex;align-items:center;gap:6px">
-                <input id="chkAuto" type="checkbox" /> 自動更新
-              </label>
-            </div>
-            <div class="group">
-              <span>間隔</span>
-              <input id="numSec" type="number" min="3" value="30" style="width:72px" />
-              <span>秒</span>
-            </div>
-            <div class="group">
-              <span>精度</span>
-              <select id="selStep" style="width:90px">
-                <option value="1">完整</option>
-                <option value="2">每 2 點</option>
-                <option value="5">每 5 點</option>
-                <option value="10">每 10 點</option>
-              </select>
-            </div>
-            <button id="btnRefresh">立即刷新</button>
-            <!-- fallbacks -->
-            <input id="inputDir" type="file" hidden webkitdirectory directory multiple />
-            <input id="inputFiles" type="file" hidden accept=".csv,text/csv" multiple />
-          </div>
-        </header>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CoreTemp Log Visualizer</title>
+  <style>
+    /* ═══════════════════════════════════════ */
+    /*  Reset & Variables                      */
+    /* ═══════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        <main class="panel">
-          <div class="chart-wrap"><canvas id="canvas"></canvas></div>
+    :root {
+      /* Soft dark palette with warm undertones */
+      --bg-deep: #141519;
+      --bg-base: #191B22;
+      --bg-surface: #1E2029;
+      --bg-elevated: #272933;
+      --bg-input: #15171E;
+      --bg-chart: #161820;
 
-          <div class="row" style="margin-top:10px">
-            <div style="display:flex; gap:8px; align-items:flex-start; flex:1 1 auto; min-width:0">
-              <span class="group" style="padding-top:4px">顯示核心：</span>
-              <div id="coreChips" class="chips"></div>
-            </div>
-            <div style="display:flex; gap:6px; flex-wrap:wrap">
-              <button id="btnAll" class="primary">全選</button>
-              <button id="btnNone">全不選</button>
-              <button id="btnAvg">只看平均</button>
-              <button id="btnZoomOut">縮小 ▼</button>
-              <button id="btnZoomReset">重設範圍</button>
-            </div>
-          </div>
+      --border: rgba(255,255,255,0.06);
+      --border-hover: rgba(255,255,255,0.12);
+      --border-active: rgba(255,255,255,0.18);
 
-          <div class="row" style="margin-top:10px">
-            <div class="status">
-              <span class="pill"><span class="dot off" id="dotAuto"></span><span>AUTO</span><span id="txtAuto">關閉</span></span>
-              <span class="pill"><span>FILE</span><span id="txtFile">尚未載入</span></span>
-              <span class="pill"><span>POINTS</span><span id="txtPts">0</span></span>
-              <span class="pill" id="pillZoom" style="display:none"><span>ZOOM</span><span id="txtZoom"></span></span>
-            </div>
-            <div class="status"><span id="txtErr" class="err"></span></div>
-          </div>
-        </main>
+      --text: #D8DAE5;
+      --text-2: #8890A6;
+      --text-3: #555B72;
+
+      --accent: #F0A050;
+      --accent-dim: rgba(240,160,80,0.10);
+      --accent-mid: rgba(240,160,80,0.35);
+      --accent2: #5B8DEF;
+      --accent2-dim: rgba(91,141,239,0.10);
+      --accent2-mid: rgba(91,141,239,0.35);
+      --success: #4BD88B;
+      --danger: #F06B6B;
+
+      --radius: 12px;
+      --radius-sm: 8px;
+      --radius-pill: 999px;
+
+      --font: 'Segoe UI Variable', 'Segoe UI', -apple-system, system-ui, sans-serif;
+      --mono: 'Cascadia Code', 'Cascadia Mono', 'Fira Code', 'Consolas', 'SF Mono', monospace;
+    }
+
+    /* ═══════════════════════════════════════ */
+    /*  Base                                    */
+    /* ═══════════════════════════════════════ */
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font);
+      background: var(--bg-deep);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    /* Atmospheric background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 900px 700px at 10% 85%, rgba(240,160,80,0.025), transparent),
+        radial-gradient(ellipse 700px 900px at 90% 5%, rgba(91,141,239,0.025), transparent);
+      pointer-events: none;
+    }
+
+    /* Subtle noise texture */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      opacity: 0.018;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+
+    #app {
+      position: relative;
+      z-index: 1;
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 20px 24px 32px;
+    }
+
+    /* ═══════════════════════════════════════ */
+    /*  Components                              */
+    /* ═══════════════════════════════════════ */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      animation: cardIn 0.45s ease-out both;
+    }
+    .card:nth-child(2) { animation-delay: 0.06s; }
+    .card:nth-child(3) { animation-delay: 0.12s; }
+    .card:nth-child(4) { animation-delay: 0.18s; }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 13px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text);
+      font: 12px/1.4 var(--font);
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .btn:hover  { border-color: var(--border-hover); background: #2E3040; }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+
+    .btn-accent {
+      border-color: var(--accent-mid);
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .btn-accent:hover { background: rgba(240,160,80,0.18); border-color: var(--accent); }
+
+    .btn-blue {
+      border-color: var(--accent2-mid);
+      background: var(--accent2-dim);
+      color: var(--accent2);
+    }
+    .btn-blue:hover { background: rgba(91,141,239,0.18); border-color: var(--accent2); }
+
+    select, input[type=number] {
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text);
+      font: 12px var(--mono);
+      outline: none;
+      transition: border-color 0.2s;
+      min-height: 30px;
+    }
+    select:focus, input[type=number]:focus { border-color: var(--accent-mid); }
+
+    .toggle {
+      position: relative;
+      width: 34px; height: 18px;
+      appearance: none; -webkit-appearance: none;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      cursor: pointer;
+      transition: all 0.25s;
+      vertical-align: middle;
+    }
+    .toggle::after {
+      content: '';
+      position: absolute; top: 2px; left: 2px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--text-3);
+      transition: all 0.25s;
+    }
+    .toggle:checked { background: var(--accent-dim); border-color: var(--accent-mid); }
+    .toggle:checked::after { left: 18px; background: var(--accent); }
+
+    /* ═══════════════════════════════════════ */
+    /*  Header                                  */
+    /* ═══════════════════════════════════════ */
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .brand h1 {
+      font-size: 21px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      background: linear-gradient(135deg, var(--text) 40%, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .cpu-info {
+      font: 11px/1.5 var(--mono);
+      color: var(--text-2);
+      margin-top: 2px;
+      letter-spacing: 0.01em;
+    }
+
+    /* ═══════════════════════════════════════ */
+    /*  Toolbar                                 */
+    /* ═══════════════════════════════════════ */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+    .toolbar-sep {
+      width: 1px; height: 20px;
+      background: var(--border);
+      margin: 0 3px;
+    }
+    .toolbar-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--text-2);
+    }
+
+    /* ═══════════════════════════════════════ */
+    /*  Chart                                   */
+    /* ═══════════════════════════════════════ */
+    .chart-section { margin-bottom: 10px; }
+
+    .chart-wrap {
+      position: relative;
+      height: 450px;
+      padding: 10px;
+      background: var(--bg-chart);
+      border-radius: var(--radius) var(--radius) 0 0;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.25);
+    }
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      cursor: crosshair;
+      border-radius: var(--radius-sm);
+    }
+
+    .chart-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 14px;
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .chart-bar-left, .chart-bar-right {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+    .zoom-label {
+      font: 11px var(--mono);
+      color: var(--text-3);
+    }
+    .stats-row {
+      display: flex; gap: 14px; flex-wrap: wrap;
+    }
+    .stat { display: inline-flex; align-items: baseline; gap: 4px; }
+    .stat-lbl {
+      font: 500 10px/1 var(--font);
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .stat-val { font: 12px var(--mono); color: var(--text-2); }
+
+    /* ═══════════════════════════════════════ */
+    /*  Cores                                   */
+    /* ═══════════════════════════════════════ */
+    .cores-section { margin-bottom: 10px; }
+
+    .cores-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      gap: 8px; flex-wrap: wrap;
+    }
+    .cores-bar h2 {
+      font: 500 12px/1.4 var(--font);
+      color: var(--text-2);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .cores-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+
+    .core-grid {
+      display: flex; flex-wrap: wrap;
+      gap: 5px;
+      padding: 12px 14px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+    .core-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px 4px 7px;
+      border-radius: var(--radius-pill);
+      border: 1.5px solid var(--border);
+      background: transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-size: 12px;
+      color: var(--text-3);
+      user-select: none;
+    }
+    .core-chip:hover { border-color: var(--border-hover); color: var(--text-2); }
+    .core-chip.on {
+      color: var(--text);
+      border-color: var(--c-border);
+      background: var(--c-bg);
+    }
+    .core-chip .cdot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ═══════════════════════════════════════ */
+    /*  Status bar                              */
+    /* ═══════════════════════════════════════ */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 14px;
+      flex-wrap: wrap;
+    }
+    .status-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      font: 11px var(--mono);
+      color: var(--text-2);
+    }
+    .pill .plbl {
+      font: 500 10px/1 var(--font);
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .sdot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .sdot.on  { background: var(--success); box-shadow: 0 0 6px rgba(75,216,139,0.35); }
+    .sdot.off { background: var(--text-3); }
+
+    .err-text { color: var(--danger); font-size: 12px; }
+
+    /* ═══════════════════════════════════════ */
+    /*  Drop overlay                            */
+    /* ═══════════════════════════════════════ */
+    .drop-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(20,21,25,0.88);
+      backdrop-filter: blur(6px);
+      align-items: center;
+      justify-content: center;
+    }
+    .drop-overlay.show { display: flex; }
+    .drop-box {
+      padding: 56px 72px;
+      border: 2px dashed var(--accent-mid);
+      border-radius: 20px;
+      text-align: center;
+      color: var(--accent);
+      font-size: 17px;
+      pointer-events: none;
+    }
+    .drop-box .drop-icon { font-size: 38px; margin-bottom: 6px; }
+
+    /* ═══════════════════════════════════════ */
+    /*  Scrollbar                               */
+    /* ═══════════════════════════════════════ */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+    /* ═══════════════════════════════════════ */
+    /*  Responsive                              */
+    /* ═══════════════════════════════════════ */
+    @media (max-width: 768px) {
+      #app { padding: 12px 12px 24px; }
+      .chart-wrap { height: 300px; }
+      .header { flex-direction: column; }
+      .toolbar { width: 100%; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Drop overlay -->
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="drop-box">
+      <div class="drop-icon">📂</div>
+      拖放 CSV 檔案到此處
+    </div>
+  </div>
+
+  <div id="app">
+    <!-- Header -->
+    <div class="header">
+      <div class="brand">
+        <h1>🌡️ CoreTemp Log Visualizer</h1>
+        <div class="cpu-info" id="cpuInfo">載入 CSV 檔案以開始分析</div>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-accent" id="btnLoad">&#x1F4C4; 載入 CSV</button>
+        <button class="btn" id="btnDir" title="選擇資料夾後自動列出其中 CSV 檔">📂 資料夾</button>
+        <input type="file" id="fileInput" accept=".csv,text/csv" multiple hidden>
+        <input type="file" id="dirInput" webkitdirectory directory multiple hidden>
+        <div class="toolbar-sep"></div>
+        <div class="toolbar-group">
+          <span>Log</span>
+          <select id="selLog" disabled style="max-width:220px"><option value="">尚未載入</option></select>
+        </div>
+        <div class="toolbar-sep"></div>
+        <div class="toolbar-group">
+          <span>自動</span>
+          <input type="checkbox" class="toggle" id="chkAuto">
+          <input id="numSec" type="number" min="3" value="30" style="width:52px" title="間隔秒數">
+          <span>秒</span>
+        </div>
+        <div class="toolbar-group">
+          <span>精度</span>
+          <select id="selStep">
+            <option value="0" selected>自動</option>
+            <option value="1">完整</option>
+            <option value="2">每 2 點</option>
+            <option value="5">每 5 點</option>
+            <option value="10">每 10 點</option>
+            <option value="20">每 20 點</option>
+            <option value="50">每 50 點</option>
+          </select>
+        </div>
+        <button class="btn" id="btnRefresh" disabled>⟳ 刷新</button>
       </div>
     </div>
 
-    <script>
-      // ---- State ----
-      const DIVIDE_BY = 1000;
-      const AVG = '__AVG__';
-      const el = (id)=>document.getElementById(id);
-      const btnPickDir=el('btnPickDir'), btnPickFiles=el('btnPickFiles');
-      const inputDir=el('inputDir'), inputFiles=el('inputFiles');
-      const lblDir=el('lblDir'), lblFiles=el('lblFiles');
-      const selLog=el('selLog');
-      const chkAuto=el('chkAuto'), numSec=el('numSec');
-      const selStep=el('selStep'), btnRefresh=el('btnRefresh');
-      const coreChips=el('coreChips');
-      const btnAll=el('btnAll'), btnNone=el('btnNone'), btnAvg=el('btnAvg');
-      const btnZoomOut=el('btnZoomOut'), btnZoomReset=el('btnZoomReset');
-      const dotAuto=el('dotAuto'), txtAuto=el('txtAuto');
-      const txtFile=el('txtFile'), txtPts=el('txtPts'), txtErr=el('txtErr');
-      const pillZoom=el('pillZoom'), txtZoom=el('txtZoom');
-      const canvas=el('canvas');
+    <!-- Chart -->
+    <div class="card chart-section">
+      <div class="chart-wrap" id="chartWrap">
+        <canvas id="canvas"></canvas>
+      </div>
+      <div class="chart-bar">
+        <div class="chart-bar-left">
+          <button class="btn" id="btnZoomIn"    disabled title="放大（或滾輪↑）">🔍+ 放大</button>
+          <button class="btn" id="btnZoomOut"   disabled title="縮小（或滾輪↓）">🔍− 縮小</button>
+          <button class="btn" id="btnZoomReset" disabled title="重設完整範圍">↺ 重設</button>
+          <span class="zoom-label" id="zoomLabel"></span>
+        </div>
+        <div class="chart-bar-right">
+          <div class="stats-row" id="statsRow"></div>
+        </div>
+      </div>
+    </div>
 
-      let fileEntries=[]; // {handle:{getFile()}, name, label, lastModified}
-      let lastEntry=null;
-      let parsed=null; // {labels, series, displayNames}
-      let selected=new Set();
-      let step=1; let hoverName=null; let hoverIndex=null;
-      let timer=null; let seriesOrder=[];
-      // Zoom state
-      let zoomStart=0, zoomEnd=null; // index range for zoom (null=full)
-      let dragStart=null, dragEnd=null; // mouse drag for selecting range
+    <!-- Core selection -->
+    <div class="card cores-section">
+      <div class="cores-bar">
+        <h2>核心選擇</h2>
+        <div class="cores-actions">
+          <button class="btn btn-blue" id="btnAll">全選</button>
+          <button class="btn" id="btnNone">全不選</button>
+          <button class="btn" id="btnAvg">僅平均</button>
+          <button class="btn btn-accent" id="btnHot" title="選擇平均負載高於整體平均的核心">🔥 高使用核心</button>
+        </div>
+      </div>
+      <div class="core-grid" id="coreGrid"></div>
+    </div>
 
-      // ---- Utils ----
-      const fmtTime=(ms)=> new Date(ms||0).toLocaleString();
-      const sortByMtime=(a,b)=> b.lastModified-a.lastModified;
-      const palette=[
-        '#4C78A8','#F58518','#54A24B','#E45756','#72B7B2','#EECA3B',
-        '#B279A2','#FF9DA6','#9D755D','#BAB0AC','#1F77B4','#F28E2B'
-      ];
-      const colorOf=(name)=>{ const i=seriesOrder.indexOf(name); return palette[(i>=0?i:0)%palette.length]; };
-      const cssVar=(name)=> getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    <!-- Status -->
+    <div class="card status-bar">
+      <div class="status-group">
+        <div class="pill"><span class="sdot off" id="dotAuto"></span><span class="plbl">Auto</span><span id="txtAuto">關閉</span></div>
+        <div class="pill"><span class="plbl">File</span><span id="txtFile">—</span></div>
+        <div class="pill"><span class="plbl">Points</span><span id="txtPts">0</span></div>
+        <div class="pill" id="pillZoom" style="display:none"><span class="plbl">Zoom</span><span id="txtZoom"></span></div>
+      </div>
+      <div class="status-group"><span class="err-text" id="txtErr"></span></div>
+    </div>
+  </div>
 
-      // ---- CSV ----
-      function parseCsv(text){
-        if(text.charCodeAt(0)===0xfeff) text=text.slice(1);
-        const lines=text.split(/\r?\n/).filter(l=>l.trim().length);
-        const hi=lines.findIndex(l=>/^Time,/.test(l));
-        if(hi<0) throw new Error('找不到標題列 (Time,...)');
-        const headers=lines[hi].split(',').map(s=>s.trim());
-        const idx={}; const series={}; const names={};
-        headers.forEach((h,i)=>{ if(/^Cur\. CPU #0 Core #\d+$/.test(h)){ idx[h]=i; series[h]=[]; const m=h.match(/Core #(\d+)$/); names[h]='Core '+(m?m[1]:'?'); }});
-        if(!Object.keys(idx).length) throw new Error('沒有核心 Cur. 欄位');
-        series[AVG]=[]; names[AVG]='全部核心平均';
-        const labels=[];
-        for(let k=hi+1;k<lines.length;k++){
-          const cols=lines[k].split(','); if(!cols.length||!cols[0].trim()) continue;
-          labels.push(cols[0].trim());
-          let sum=0,cnt=0;
-          for(const [key,i] of Object.entries(idx)){
-            const v=Number((cols[i]||'').trim());
-            if(Number.isFinite(v)){ const x=v/DIVIDE_BY; series[key].push(x); sum+=x; cnt++; } else series[key].push(null);
-          }
-          series[AVG].push(cnt?sum/cnt:null);
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <script>
+  /* ═══════════════════════════════════════
+     Configuration
+     ═══════════════════════════════════════ */
+  const DIVISOR          = 1000;
+  const AVG              = '__AVG__';
+  const MIN_ZOOM         = 10;
+  const WHEEL_FACTOR     = 0.15;
+  const PAD              = { t: 30, r: 22, b: 42, l: 58 };
+  const COLORS = [
+    '#5B9CF5','#F5A742','#5FD4A9','#F06B78','#A78BFA',
+    '#3DD4E7','#FB923C','#EC79B5','#95D45A','#FACC15',
+    '#F472B6','#60A5FA','#C084FC','#2DD4BF','#D97706',
+    '#86EFAC','#FCD34D','#818CF8','#D8B4FE','#6EE7B7',
+  ];
+
+  /* ═══════════════════════════════════════
+     State
+     ═══════════════════════════════════════ */
+  const S = {
+    parsed:     null,   // { labels, series, names, meta, loads }
+    keys:       [],     // series key order (stable for coloring)
+    sel:        new Set(),
+    entries:    [],     // file entries
+    last:       null,   // last loaded entry
+    step:       1,
+    autoStep:   true,   // auto precision?
+    hKey:       null,   // hover series key
+    hIdx:       null,   // hover data index
+    zS:         0,      // zoom start
+    zE:         null,   // zoom end (null = full)
+    dragX0:     null,   // drag start X
+    dragX:      null,   // drag current X
+    dragging:   false,
+    timer:      null,
+    lastDir:    null,   // FileSystemDirectoryHandle (for startIn)
+  };
+
+  /* Cached chart bounds (set by draw(), used by findHover()) */
+  let drawCache = null;
+
+  /* Persist directory handle to IndexedDB for cross-session memory */
+  const DirStore = {
+    DB: 'CoreTempViewer', ST: 'state', KEY: 'lastDir',
+    _open() {
+      return new Promise((ok, fail) => {
+        const r = indexedDB.open(this.DB, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(this.ST);
+        r.onsuccess = () => ok(r.result);
+        r.onerror   = () => fail(r.error);
+      });
+    },
+    async save(handle) {
+      try {
+        const db = await this._open();
+        const tx = db.transaction(this.ST, 'readwrite');
+        tx.objectStore(this.ST).put(handle, this.KEY);
+        await new Promise(ok => { tx.oncomplete = ok; });
+        db.close();
+      } catch { /* file:// may not support IDB */ }
+    },
+    async load() {
+      try {
+        const db = await this._open();
+        const tx = db.transaction(this.ST, 'readonly');
+        const r  = tx.objectStore(this.ST).get(this.KEY);
+        const h  = await new Promise(ok => { r.onsuccess = () => ok(r.result); });
+        db.close();
+        return h ?? null;
+      } catch { return null; }
+    },
+  };
+
+  /* Restore lastDir from IndexedDB on startup */
+  DirStore.load().then(h => { if (h) S.lastDir = h; });
+
+  /* ═══════════════════════════════════════
+     DOM
+     ═══════════════════════════════════════ */
+  const Q = id => document.getElementById(id);
+  const dom = {
+    drop:      Q('dropOverlay'),
+    cpuInfo:   Q('cpuInfo'),
+    btnLoad:   Q('btnLoad'),
+    btnDir:    Q('btnDir'),
+    fileIn:    Q('fileInput'),
+    dirIn:     Q('dirInput'),
+    selLog:    Q('selLog'),
+    chkAuto:   Q('chkAuto'),
+    numSec:    Q('numSec'),
+    selStep:   Q('selStep'),
+    btnRef:    Q('btnRefresh'),
+    canvas:    Q('canvas'),
+    wrap:      Q('chartWrap'),
+    btnZI:     Q('btnZoomIn'),
+    btnZO:     Q('btnZoomOut'),
+    btnZR:     Q('btnZoomReset'),
+    zoomLbl:   Q('zoomLabel'),
+    stats:     Q('statsRow'),
+    grid:      Q('coreGrid'),
+    btnAll:    Q('btnAll'),
+    btnNone:   Q('btnNone'),
+    btnAvg:    Q('btnAvg'),
+    btnHot:    Q('btnHot'),
+    dotAuto:   Q('dotAuto'),
+    txtAuto:   Q('txtAuto'),
+    txtFile:   Q('txtFile'),
+    txtPts:    Q('txtPts'),
+    pillZoom:  Q('pillZoom'),
+    txtZoom:   Q('txtZoom'),
+    txtErr:    Q('txtErr'),
+  };
+
+  /* ═══════════════════════════════════════
+     Utilities
+     ═══════════════════════════════════════ */
+  function colorOf(k) {
+    if (k === AVG) return '#FFFFFF';
+    const i = S.keys.indexOf(k);
+    return COLORS[(i >= 0 ? i : 0) % COLORS.length];
+  }
+
+  function rgba(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function fmtT(v) { return Number.isFinite(v) ? v.toFixed(1) + ' °C' : '—'; }
+
+  /* ═══════════════════════════════════════
+     CSV Parser
+     ═══════════════════════════════════════ */
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+
+    /* Metadata */
+    const meta = {};
+    for (const l of lines) {
+      const m = l.match(/^(Processor|Platform|Session start|Lithography):,\s*(.+)/i);
+      if (m) meta[m[1].toLowerCase().replace(/\s+/g, '_')] = m[2].trim();
+    }
+
+    /* Header row */
+    const hi = lines.findIndex(l => /^Time,/.test(l));
+    if (hi < 0) throw new Error('找不到標題列（應以 "Time," 開頭）');
+    const headers = lines[hi].split(',').map(s => s.trim());
+
+    /* Column mapping */
+    const tempIdx = {};   // "Cur. CPU #0 Core #N" → col index
+    const loadIdx = {};   // "CoreN" → col index
+    const names   = {};   // display names
+
+    headers.forEach((h, i) => {
+      const tm = h.match(/^Cur\.\s*CPU\s*#\d+\s*Core\s*#(\d+)$/);
+      if (tm) {
+        tempIdx[h] = i;
+        names[h] = 'Core ' + tm[1];
+      }
+      const lm = h.match(/^CPU\s*#\d+\s*Core\s*#(\d+)\s*Load$/);
+      if (lm) loadIdx['Core' + lm[1]] = i;
+    });
+
+    if (!Object.keys(tempIdx).length) {
+      throw new Error('CSV 中找不到核心溫度欄位');
+    }
+
+    /* Series init */
+    const series = {};
+    const loads  = {};
+    for (const k of Object.keys(tempIdx)) series[k] = [];
+    for (const k of Object.keys(loadIdx)) loads[k] = [];
+    series[AVG] = [];
+    names[AVG] = '全核心平均';
+
+    /* Parse rows */
+    const labels = [];
+    for (let r = hi + 1; r < lines.length; r++) {
+      const cols = lines[r].split(',');
+      if (!cols[0]?.trim()) continue;
+      labels.push(cols[0].trim());
+
+      let sum = 0, cnt = 0;
+      for (const [key, ci] of Object.entries(tempIdx)) {
+        const raw = Number(cols[ci]?.trim());
+        if (Number.isFinite(raw)) {
+          const t = raw / DIVISOR;
+          series[key].push(t);
+          sum += t; cnt++;
+        } else {
+          series[key].push(null);
         }
-        return {labels, series, displayNames:names};
+      }
+      series[AVG].push(cnt ? sum / cnt : null);
+
+      for (const [key, ci] of Object.entries(loadIdx)) {
+        const raw = Number(cols[ci]?.trim());
+        loads[key].push(Number.isFinite(raw) ? raw / DIVISOR : null);
+      }
+    }
+
+    return { labels, series, names, meta, loads };
+  }
+
+  /* ═══════════════════════════════════════
+     Data Analysis
+     ═══════════════════════════════════════ */
+  function highUsageKeys() {
+    if (!S.parsed) return [];
+    const coreKeys = S.keys.filter(k => k !== AVG);
+
+    /* Prefer load data */
+    const ld = S.parsed.loads;
+    if (ld && Object.keys(ld).length) {
+      const avgs = {};
+      for (const [lk, arr] of Object.entries(ld)) {
+        let s = 0, n = 0;
+        for (const v of arr) { if (v != null) { s += v; n++; } }
+        avgs[lk] = n ? s / n : 0;
+      }
+      const overall = Object.values(avgs).reduce((a, b) => a + b, 0) / Object.keys(avgs).length;
+      const hotNums = new Set();
+      for (const [lk, avg] of Object.entries(avgs)) {
+        if (avg > overall) hotNums.add(lk.replace('Core', ''));
+      }
+      const result = coreKeys.filter(k => {
+        const m = k.match(/Core\s*#(\d+)$/);
+        return m && hotNums.has(m[1]);
+      });
+      if (result.length) return result;
+    }
+
+    /* Fallback: temperature-based */
+    const avgs = {};
+    coreKeys.forEach(k => {
+      const arr = S.parsed.series[k];
+      let s = 0, n = 0;
+      for (const v of arr) { if (v != null) { s += v; n++; } }
+      avgs[k] = n ? s / n : 0;
+    });
+    const overall = Object.values(avgs).reduce((a, b) => a + b, 0) / coreKeys.length;
+    return coreKeys.filter(k => avgs[k] > overall);
+  }
+
+  function visibleStats() {
+    if (!S.parsed || !S.sel.size) return null;
+    const s0 = Math.max(0, S.zS);
+    const e0 = S.zE ?? S.parsed.labels.length - 1;
+    let lo = Infinity, hi = -Infinity, sum = 0, n = 0;
+    for (const k of S.sel) {
+      const arr = S.parsed.series[k];
+      if (!arr) continue;
+      for (let i = s0; i <= e0; i++) {
+        const v = arr[i];
+        if (v == null) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        sum += v; n++;
+      }
+    }
+    return n ? { min: lo, max: hi, avg: sum / n } : null;
+  }
+
+  /* ═══════════════════════════════════════
+     Chart Renderer
+     ═══════════════════════════════════════ */
+  function draw() {
+    const cvs = dom.canvas;
+    const ctx = cvs.getContext('2d');
+    const dpr = devicePixelRatio || 1;
+    const cw  = cvs.clientWidth  || dom.wrap.clientWidth;
+    const ch  = cvs.clientHeight || dom.wrap.clientHeight;
+    cvs.width  = cw * dpr;
+    cvs.height = ch * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    /* Background gradient */
+    const bg = ctx.createLinearGradient(0, 0, 0, ch);
+    bg.addColorStop(0, '#181A24');
+    bg.addColorStop(1, '#14161E');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, cw, ch);
+
+    drawCache = null; /* Reset — will be set later if bounds are valid */
+
+    if (!S.parsed || !S.sel.size) {
+      drawEmpty(ctx, cw, ch);
+      updateStatus();
+      return;
+    }
+
+    const fullN = S.parsed.labels.length;
+    const si = clamp(S.zS, 0, fullN - 1);
+    const ei = S.zE != null ? clamp(S.zE, 0, fullN - 1) : fullN - 1;
+    const vN = ei - si + 1;
+    if (vN < 2) { updateStatus(); return; }
+
+    /* Visible series */
+    const vis = S.keys
+      .filter(k => S.sel.has(k) && S.parsed.series[k])
+      .map(k => [k, S.parsed.series[k]]);
+    if (!vis.length) { updateStatus(); return; }
+
+    /* Y bounds */
+    let yLo = Infinity, yHi = -Infinity;
+    for (const [, arr] of vis) {
+      for (let i = si; i <= ei; i++) {
+        const v = arr[i];
+        if (v != null) { if (v < yLo) yLo = v; if (v > yHi) yHi = v; }
+      }
+    }
+    if (!Number.isFinite(yLo)) { updateStatus(); return; }
+    const yr = yHi - yLo || 1;
+    yLo -= yr * 0.08;
+    yHi += yr * 0.08;
+
+    const pW = cw - PAD.l - PAD.r;
+    const pH = ch - PAD.t - PAD.b;
+    const xS = pW / (vN - 1);
+    const toX = i => PAD.l + (i - si) * xS;
+    const toY = v => PAD.t + pH - ((v - yLo) / (yHi - yLo)) * pH;
+
+    /* Cache bounds for findHover() */
+    drawCache = { si, ei, vN, yLo, yHi, pW, pH };
+
+    drawGrid(ctx, pW, pH, yLo, yHi, si, ei, vN);
+
+    /* Effective step (rendering optimisation) */
+    const userStep = S.autoStep ? 0 : S.step;
+    const autoCalc = Math.max(1, Math.ceil(vN / (pW * 2)));
+    const step = userStep > 0 ? Math.max(userStep, autoCalc) : autoCalc;
+
+    /* Data lines */
+    const hovering = S.hKey != null;
+    for (const [key, arr] of vis) {
+      const col   = colorOf(key);
+      const isHov = key === S.hKey;
+      const isAvg = key === AVG;
+
+      ctx.save();
+      ctx.strokeStyle = hovering && !isHov ? rgba(col, 0.12) : col;
+      ctx.lineWidth   = isHov ? 2.8 : (isAvg ? 2 : 1.5);
+      ctx.lineJoin    = 'round';
+      ctx.lineCap     = 'round';
+      if (isAvg && !isHov) ctx.setLineDash([6, 4]);
+
+      ctx.beginPath();
+      let on = false;
+      for (let i = si; i <= ei; i += step) {
+        const v = arr[i];
+        if (v == null) { on = false; continue; }
+        const px = toX(i), py = toY(v);
+        if (!on) { ctx.moveTo(px, py); on = true; }
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    /* Drag selection overlay */
+    if (S.dragging && S.dragX0 != null && S.dragX != null) {
+      const x1 = Math.min(S.dragX0, S.dragX);
+      const x2 = Math.max(S.dragX0, S.dragX);
+      ctx.save();
+      ctx.fillStyle = 'rgba(240,160,80,0.06)';
+      ctx.fillRect(x1, PAD.t, x2 - x1, pH);
+      ctx.strokeStyle = 'rgba(240,160,80,0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(x1, PAD.t, x2 - x1, pH);
+      ctx.restore();
+    }
+
+    /* Crosshair + tooltip */
+    if (S.hKey && S.hIdx != null) {
+      drawTooltip(ctx, toX, toY, pW, pH, vis);
+    }
+
+    updateStatus();
+  }
+
+  function drawEmpty(ctx, w, h) {
+    ctx.fillStyle = '#555B72';
+    ctx.font = '14px ' + getComputedStyle(document.documentElement).getPropertyValue('--font');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      S.parsed ? '請選擇至少一個核心以顯示圖表' : '📂  載入 CSV 檔案或拖放至此',
+      w / 2, h / 2
+    );
+  }
+
+  function drawGrid(ctx, pW, pH, yLo, yHi, si, ei, vN) {
+    const N = 6;
+    ctx.save();
+    ctx.font = '10px Cascadia Code, Consolas, monospace';
+    ctx.textBaseline = 'middle';
+
+    /* Horizontal lines + Y labels */
+    ctx.textAlign = 'right';
+    ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+    ctx.fillStyle   = '#555B72';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= N; i++) {
+      const y = PAD.t + pH - (i / N) * pH;
+      const v = yLo + (i / N) * (yHi - yLo);
+      ctx.beginPath();
+      ctx.moveTo(PAD.l, y);
+      ctx.lineTo(PAD.l + pW, y);
+      ctx.stroke();
+      ctx.fillText(v.toFixed(1), PAD.l - 8, y);
+    }
+
+    /* Unit */
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('°C', PAD.l, PAD.t - 6);
+
+    /* X labels */
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const maxT = Math.min(14, vN);
+    const tStep = Math.max(1, Math.round(vN / maxT));
+    const xS = pW / (vN - 1);
+    for (let i = si; i <= ei; i += tStep) {
+      const x = PAD.l + (i - si) * xS;
+      const lbl = (S.parsed.labels[i] || '').split(' ')[0];
+      ctx.fillText(lbl, x, PAD.t + pH + 8);
+    }
+
+    /* Axes */
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, PAD.t);
+    ctx.lineTo(PAD.l, PAD.t + pH);
+    ctx.lineTo(PAD.l + pW, PAD.t + pH);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawTooltip(ctx, toX, toY, pW, pH, vis) {
+    const arr = S.parsed.series[S.hKey];
+    if (!arr) return;
+    const v = arr[S.hIdx];
+    if (!Number.isFinite(v)) return;
+
+    const px = toX(S.hIdx);
+    const py = toY(v);
+    const col = colorOf(S.hKey);
+
+    /* Crosshair */
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.moveTo(px, PAD.t); ctx.lineTo(px, PAD.t + pH); ctx.stroke();
+    ctx.strokeStyle = rgba(col, 0.25);
+    ctx.beginPath(); ctx.moveTo(PAD.l, py); ctx.lineTo(PAD.l + pW, py); ctx.stroke();
+    ctx.restore();
+
+    /* Dot */
+    ctx.save();
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#181A24'; ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.stroke();
+    ctx.shadowColor = col; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill();
+    ctx.restore();
+
+    /* Box */
+    const name = S.parsed.names[S.hKey] || S.hKey;
+    const time = S.parsed.labels[S.hIdx] || '';
+    const rows = [name, time, v.toFixed(2) + ' °C'];
+
+    ctx.save();
+    const bp = 8;
+    const lh = 17;
+    let mw = 0;
+    /* Measure each row with its actual rendered font */
+    ctx.font = 'bold 11px Cascadia Code, Consolas, monospace';
+    mw = Math.max(mw, ctx.measureText(rows[0]).width);
+    ctx.font = '11px Cascadia Code, Consolas, monospace';
+    mw = Math.max(mw, ctx.measureText(rows[1]).width);
+    ctx.font = 'bold 12px Cascadia Code, Consolas, monospace';
+    mw = Math.max(mw, ctx.measureText(rows[2]).width);
+    const bw = mw + bp * 2;
+    const bh = rows.length * lh + bp * 2;
+    let bx = px + 14, by = py - bh - 10;
+    if (bx + bw > PAD.l + pW) bx = px - bw - 14;
+    if (by < PAD.t) by = py + 14;
+    if (by + bh > PAD.t + pH) by = PAD.t + pH - bh - 4;
+
+    roundRect(ctx, bx, by, bw, bh, 8);
+    ctx.fillStyle = 'rgba(28,30,42,0.92)'; ctx.fill();
+    ctx.strokeStyle = rgba(col, 0.3); ctx.lineWidth = 1; ctx.stroke();
+
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    let ty = by + bp;
+    ctx.fillStyle = col;
+    ctx.font = 'bold 11px Cascadia Code, Consolas, monospace';
+    ctx.fillText(rows[0], bx + bp, ty); ty += lh;
+    ctx.fillStyle = '#8890A6';
+    ctx.font = '11px Cascadia Code, Consolas, monospace';
+    ctx.fillText(rows[1], bx + bp, ty); ty += lh;
+    ctx.fillStyle = '#D8DAE5';
+    ctx.font = 'bold 12px Cascadia Code, Consolas, monospace';
+    ctx.fillText(rows[2], bx + bp, ty);
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  /* ═══════════════════════════════════════
+     Status & Stats
+     ═══════════════════════════════════════ */
+  function updateStatus() {
+    const has = !!S.parsed;
+    const zoomed = S.zE != null;
+
+    if (has && zoomed) {
+      const n = S.parsed.labels.length;
+      const s = clamp(S.zS, 0, n - 1);
+      const e = clamp(S.zE, 0, n - 1);
+      const pct = ((e - s + 1) / n * 100).toFixed(1);
+      dom.txtZoom.textContent = `${S.parsed.labels[s]} ~ ${S.parsed.labels[e]} (${pct}%)`;
+      dom.pillZoom.style.display = '';
+      dom.zoomLbl.textContent = `${e - s + 1} / ${n} 點 (${pct}%)`;
+    } else {
+      dom.pillZoom.style.display = 'none';
+      dom.zoomLbl.textContent = has ? `共 ${S.parsed.labels.length.toLocaleString()} 點` : '';
+    }
+
+    dom.btnZI.disabled = !has;
+    dom.btnZO.disabled = !zoomed;
+    dom.btnZR.disabled = !zoomed;
+
+    const st = visibleStats();
+    dom.stats.innerHTML = st
+      ? `<div class="stat"><span class="stat-lbl">Min</span><span class="stat-val">${fmtT(st.min)}</span></div>
+         <div class="stat"><span class="stat-lbl">Max</span><span class="stat-val">${fmtT(st.max)}</span></div>
+         <div class="stat"><span class="stat-lbl">Avg</span><span class="stat-val">${fmtT(st.avg)}</span></div>
+         <div class="stat"><span class="stat-lbl">ΔT</span><span class="stat-val">${fmtT(st.max - st.min)}</span></div>`
+      : '';
+  }
+
+  /* ═══════════════════════════════════════
+     UI Builders
+     ═══════════════════════════════════════ */
+  function buildChips() {
+    dom.grid.innerHTML = '';
+    if (!S.parsed) return;
+
+    for (const key of S.keys) {
+      const col  = colorOf(key);
+      const name = S.parsed.names[key] || key;
+      const chip = document.createElement('div');
+      chip.className = 'core-chip' + (S.sel.has(key) ? ' on' : '');
+      chip.dataset.k = key;
+      chip.style.setProperty('--c-border', rgba(col, 0.4));
+      chip.style.setProperty('--c-bg', rgba(col, 0.08));
+      chip.innerHTML = `<span class="cdot" style="background:${col}"></span><span>${name}</span>`;
+
+      chip.onclick = () => {
+        S.sel.has(key) ? S.sel.delete(key) : S.sel.add(key);
+        chip.classList.toggle('on', S.sel.has(key));
+        draw();
+      };
+      chip.onmouseenter = () => { S.hKey = key; draw(); };
+      chip.onmouseleave = () => { S.hKey = null; draw(); };
+
+      dom.grid.appendChild(chip);
+    }
+  }
+
+  function syncChips() {
+    dom.grid.querySelectorAll('.core-chip').forEach(c => {
+      c.classList.toggle('on', S.sel.has(c.dataset.k));
+    });
+  }
+
+  function buildLogSel() {
+    dom.selLog.innerHTML = '';
+    if (!S.entries.length) {
+      dom.selLog.innerHTML = '<option value="">尚未載入</option>';
+      dom.selLog.disabled = true;
+      return;
+    }
+    S.entries.forEach((e, i) => {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = e.label;
+      dom.selLog.appendChild(o);
+    });
+    dom.selLog.disabled = false;
+  }
+
+  /* ═══════════════════════════════════════
+     File Loading
+     ═══════════════════════════════════════ */
+  async function loadEntry(entry, opts = {}) {
+    const { preserve = false, silent = false } = opts;
+    dom.txtErr.textContent = '';
+    try {
+      const file = await entry.handle.getFile();
+      const text = await file.text();
+      const data = parseCsv(text);
+      S.keys = Object.keys(data.series);
+
+      if (preserve && S.sel.size) {
+        const keep = new Set([...S.sel].filter(k => data.series[k]));
+        S.sel = keep.size ? keep : new Set(S.keys);
+      } else {
+        S.sel = new Set(S.keys);
       }
 
-      // ---- Chart ----
-      function updateZoomInfo(){
-        if(!parsed){ pillZoom.style.display='none'; return; }
-        if(zoomEnd!=null){
-          const fullN=parsed.labels.length;
-          const startIdx=Math.max(0,zoomStart);
-          const endIdx=Math.min(fullN-1,zoomEnd);
-          const pct=((endIdx-startIdx+1)/fullN*100).toFixed(1);
-          txtZoom.textContent=`${parsed.labels[startIdx]} ~ ${parsed.labels[endIdx]} (${pct}%)`;
-          pillZoom.style.display='inline-flex';
-          btnZoomOut.disabled=false;
-          btnZoomReset.disabled=false;
-        }else{
-          pillZoom.style.display='none';
-          btnZoomOut.disabled=true;
-          btnZoomReset.disabled=true;
+      S.parsed = data;
+      if (!preserve) { S.zS = 0; S.zE = null; }
+
+      /* CPU info */
+      if (data.meta.processor) {
+        let info = data.meta.processor;
+        if (data.meta.session_start) info += '  ·  ' + data.meta.session_start;
+        dom.cpuInfo.textContent = info;
+      }
+
+      buildChips();
+      draw();
+      dom.txtFile.textContent = entry.label;
+      dom.txtPts.textContent  = data.labels.length.toLocaleString();
+      dom.btnRef.disabled = false;
+      S.last = entry;
+    } catch (e) {
+      console.error(e);
+      if (!silent) dom.txtErr.textContent = '⚠ ' + (e?.message || e);
+    }
+  }
+
+  async function loadFiles(files) {
+    const csvs = [...files].filter(f => f.name.toLowerCase().endsWith('.csv'));
+    if (!csvs.length) { dom.txtErr.textContent = '未找到 .csv 檔案'; return; }
+    S.entries = csvs
+      .map(f => ({
+        handle: { getFile: async () => f },
+        name: f.name,
+        lastModified: f.lastModified || 0,
+        label: f.name,
+      }))
+      .sort((a, b) => b.lastModified - a.lastModified);
+    buildLogSel();
+    await loadEntry(S.entries[0]);
+  }
+
+  /* ═══════════════════════════════════════
+     Zoom
+     ═══════════════════════════════════════ */
+  function zoomIn() {
+    if (!S.parsed) return;
+    const n = S.parsed.labels.length;
+    const s = S.zS, e = S.zE ?? n - 1;
+    const range = e - s;
+    const nr = Math.max(MIN_ZOOM, Math.floor(range * 0.6));
+    const c = Math.floor((s + e) / 2);
+    let ns = Math.max(0, c - Math.floor(nr / 2));
+    let ne = Math.min(n - 1, ns + nr);
+    if (ns === 0) ne = Math.min(n - 1, nr);
+    S.zS = ns; S.zE = ne;
+    draw();
+  }
+
+  function zoomOut() {
+    if (!S.parsed || S.zE == null) return;
+    const n = S.parsed.labels.length;
+    const range = S.zE - S.zS;
+    const nr = Math.min(n - 1, Math.ceil(range * 1.6));
+    const c = Math.floor((S.zS + S.zE) / 2);
+    let ns = Math.max(0, c - Math.floor(nr / 2));
+    let ne = Math.min(n - 1, ns + nr);
+    if (ne >= n - 1) { ne = n - 1; ns = Math.max(0, n - 1 - nr); }
+    if (ns === 0 && ne >= n - 1) { S.zS = 0; S.zE = null; }
+    else { S.zS = ns; S.zE = ne; }
+    draw();
+  }
+
+  function zoomReset() { S.zS = 0; S.zE = null; draw(); }
+
+  function zoomWheel(ratio, dir) {
+    if (!S.parsed) return;
+    const n = S.parsed.labels.length;
+    const s = S.zS, e = S.zE ?? n - 1;
+    const range = e - s;
+    const factor = dir > 0 ? (1 + WHEEL_FACTOR) : (1 - WHEEL_FACTOR);
+    const nr = Math.round(range * factor);
+    if (nr >= n - 1) { S.zS = 0; S.zE = null; draw(); return; }
+    if (nr < MIN_ZOOM) return;
+    const anchor = s + ratio * range;
+    let ns = Math.round(anchor - ratio * nr);
+    let ne = ns + nr;
+    if (ns < 0) { ne -= ns; ns = 0; }
+    if (ne >= n) { ns -= (ne - n + 1); ne = n - 1; ns = Math.max(0, ns); }
+    S.zS = ns; S.zE = ne;
+    draw();
+  }
+
+  /* ═══════════════════════════════════════
+     Hover Detection
+     ═══════════════════════════════════════ */
+  function findHover(mx, my) {
+    /* Use cached bounds from last draw() for O(S) instead of O(S×N) */
+    if (!drawCache || !S.parsed) { S.hKey = null; S.hIdx = null; return; }
+    const { si, ei, vN, yLo, yHi, pW, pH } = drawCache;
+
+    if (mx < PAD.l || mx > PAD.l + pW || my < PAD.t || my > PAD.t + pH) {
+      S.hKey = null; S.hIdx = null; return;
+    }
+    if (vN < 2) { S.hKey = null; S.hIdx = null; return; }
+
+    const ratio = clamp((mx - PAD.l) / pW, 0, 1);
+    const idx = clamp(Math.round(si + ratio * (vN - 1)), si, ei);
+    const toY = v => PAD.t + pH - ((v - yLo) / (yHi - yLo)) * pH;
+
+    /* Check a small neighbourhood around nearest X index */
+    const spread = Math.max(1, Math.ceil(vN / pW * 8));
+    let best = 24, bk = null, bi = null;
+    for (let di = -spread; di <= spread; di++) {
+      const ci = clamp(idx + di, si, ei);
+      const px = PAD.l + (ci - si) / (vN - 1) * pW;
+      for (const k of S.keys) {
+        if (!S.sel.has(k)) continue;
+        const arr = S.parsed.series[k];
+        if (!arr) continue;
+        const v = arr[ci];
+        if (v == null) continue;
+        const d = Math.hypot(px - mx, toY(v) - my);
+        if (d < best) { best = d; bk = k; bi = ci; }
+      }
+    }
+    S.hKey = bk; S.hIdx = bi;
+  }
+
+  /* ═══════════════════════════════════════
+     Auto Refresh
+     ═══════════════════════════════════════ */
+  function setAuto(on) {
+    if (S.timer) { clearInterval(S.timer); S.timer = null; }
+    if (on) {
+      let sec = parseInt(dom.numSec.value, 10);
+      if (!Number.isFinite(sec) || sec < 3) { sec = 3; dom.numSec.value = '3'; }
+      S.timer = setInterval(() => {
+        if (S.last) loadEntry(S.last, { preserve: true, silent: true });
+      }, sec * 1000);
+      dom.txtAuto.textContent = `每 ${sec} 秒`;
+      dom.dotAuto.className = 'sdot on';
+    } else {
+      dom.txtAuto.textContent = '關閉';
+      dom.dotAuto.className = 'sdot off';
+    }
+  }
+
+  /* ═══════════════════════════════════════
+     Event Wiring
+     ═══════════════════════════════════════ */
+  /* File — prefer File System Access API for live-refresh + directory memory */
+  const PICKER_ID = 'coretemp-csv';   /* browser remembers last dir per id */
+
+  dom.btnLoad.addEventListener('click', async () => {
+    dom.txtErr.textContent = '';
+    try {
+      if (window.showOpenFilePicker) {
+        const opts = {
+          id: PICKER_ID,
+          multiple: true,
+          types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'], 'text/plain': ['.csv'] } }],
+        };
+        if (S.lastDir) opts.startIn = S.lastDir;
+        const handles = await window.showOpenFilePicker(opts);
+        S.entries = [];
+        for (const h of handles) {
+          const f = await h.getFile();
+          S.entries.push({
+            handle: h, name: f.name,
+            lastModified: f.lastModified || 0, label: f.name,
+          });
         }
+        S.entries.sort((a, b) => b.lastModified - a.lastModified);
+        buildLogSel();
+        if (S.entries.length) await loadEntry(S.entries[0]);
+      } else {
+        dom.fileIn.click();
       }
+    } catch (e) {
+      if (e?.name !== 'AbortError') dom.txtErr.textContent = '⚠ ' + (e?.message || e);
+    }
+  });
+  dom.fileIn.addEventListener('change', () => {
+    if (dom.fileIn.files.length) loadFiles(dom.fileIn.files);
+  });
 
-      function draw(){
-        const ctx=canvas.getContext('2d');
-        const dpr=window.devicePixelRatio||1; const cw=canvas.parentElement.clientWidth||600; const ch=canvas.parentElement.clientHeight||400;
-        canvas.width=cw*dpr; canvas.height=ch*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-        const pad={t:30,r:20,b:40,l:55}; const w=cw-pad.l-pad.r, h=ch-pad.t-pad.b;
-        // background
-        ctx.clearRect(0,0,cw,ch); ctx.fillStyle=cssVar('--panel')||'#252526'; ctx.fillRect(0,0,cw,ch);
-        if(!parsed){ updateZoomInfo(); return; }
-        // Apply zoom range
-        const fullN=parsed.labels.length;
-        const startIdx=Math.max(0,zoomStart);
-        const endIdx=zoomEnd!=null? Math.min(fullN-1,zoomEnd) : fullN-1;
-        const entries=Object.entries(parsed.series);
-        const vis=[...selected].length?entries.filter(([k])=>selected.has(k)):[];
-        // Compute min/max within zoom range
-        let min=Infinity,max=-Infinity;
-        vis.forEach(([,arr])=>{ for(let i=startIdx;i<=endIdx;i++){ const v=arr[i]; if(v==null||!Number.isFinite(v)) continue; if(v<min)min=v; if(v>max)max=v; }});
-        if(!Number.isFinite(min)||!Number.isFinite(max)){ updateZoomInfo(); return; }
-        const range=max-min||1; min-=range*.1; max+=range*.1;
-        const n=endIdx-startIdx+1; const xstep=n>1? w/(n-1):w;
-        const x=i=> pad.l+(i-startIdx)*xstep; const y=v=> pad.t+h-((v-min)/(max-min))*h;
-        // grid + axes
-        ctx.strokeStyle=cssVar('--chart-grid')||'#2e2e2e'; ctx.lineWidth=1; ctx.font='10px system-ui'; ctx.fillStyle=cssVar('--muted')||'#9da5b4';
-        for(let i=0;i<=5;i++){ const yy=pad.t+h-i*h/5; ctx.beginPath(); ctx.moveTo(pad.l,yy); ctx.lineTo(pad.l+w,yy); ctx.stroke(); ctx.fillText((min+(max-min)*i/5).toFixed(1), pad.l-6, yy); }
-        ctx.textAlign='center'; ctx.textBaseline='top'; const maxTicks=10; const stepX=Math.max(1, Math.round(n/maxTicks));
-        for(let i=startIdx;i<=endIdx;i+=stepX){ ctx.fillText(parsed.labels[i]||'', x(i), pad.t+h+6); }
-        ctx.beginPath(); ctx.moveTo(pad.l,pad.t); ctx.lineTo(pad.l,pad.t+h); ctx.moveTo(pad.l,pad.t+h); ctx.lineTo(pad.l+w,pad.t+h); ctx.strokeStyle=cssVar('--chart-axis')||'#5a5a5a'; ctx.stroke();
-        // lines
-        ctx.lineJoin='round'; ctx.lineCap='round';
-        vis.forEach(([name,data])=>{ const color=colorOf(name); ctx.strokeStyle=color; ctx.lineWidth=1.8; ctx.beginPath(); let started=false; const s=Math.max(1,step|0); for(let k=startIdx;k<=endIdx;k+=s){ const v=data[k]; if(v==null){ started=false; continue;} const xx=x(k), yy=y(v); if(!started){ ctx.moveTo(xx,yy); started=true; } else ctx.lineTo(xx,yy);} ctx.stroke(); });
-        // dim + highlight
-        if(hoverName){ ctx.save(); ctx.fillStyle=cssVar('--chart-dim')||'rgba(30,30,30,.55)'; ctx.fillRect(pad.l,pad.t,w,h); ctx.restore(); const idx=vis.findIndex(([n])=>n===hoverName); if(idx>=0){ const [,data]=vis[idx]; const color=colorOf(hoverName); ctx.strokeStyle=color; ctx.lineWidth=3; ctx.beginPath(); let started=false; const s=Math.max(1,step|0); for(let k=startIdx;k<=endIdx;k+=s){ const v=data[k]; if(v==null){ started=false; continue;} const xx=x(k), yy=y(v); if(!started){ ctx.moveTo(xx,yy); started=true;} else ctx.lineTo(xx,yy);} ctx.stroke(); }}
-        // Drag selection overlay
-        if(dragStart!=null && dragEnd!=null){ ctx.save(); const x1=Math.min(dragStart.x,dragEnd.x); const x2=Math.max(dragStart.x,dragEnd.x); ctx.fillStyle='rgba(86,156,214,.15)'; ctx.fillRect(x1,pad.t,x2-x1,h); ctx.strokeStyle='rgba(86,156,214,.6)'; ctx.lineWidth=1; ctx.strokeRect(x1,pad.t,x2-x1,h); ctx.restore(); }
-        // point + tooltip
-        if(hoverName!=null && hoverIndex!=null){ const arr=parsed.series[hoverName]; const v=arr&&arr[hoverIndex]; if(Number.isFinite(v)){ const xx=x(hoverIndex), yy=y(v); const color=colorOf(hoverName); ctx.save(); ctx.fillStyle=cssVar('--chart-marker')||'#1e1e1e'; ctx.beginPath(); ctx.arc(xx,yy,4,0,Math.PI*2); ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle=color; ctx.beginPath(); ctx.arc(xx,yy,4,0,Math.PI*2); ctx.stroke(); const label=(parsed.displayNames&&parsed.displayNames[hoverName])||hoverName; const tip=[label, parsed.labels[hoverIndex]||'', v.toFixed(3)+' °C']; ctx.font='11px system-ui'; const padBox=6; let mw=0; tip.forEach(t=>mw=Math.max(mw, ctx.measureText(t).width)); const bw=mw+padBox*2, bh=tip.length*14+padBox*2; let bx=xx+12, by=yy-bh-8; if(bx+bw>pad.l+w) bx=xx-bw-12; if(by<pad.t) by=yy+12; ctx.fillStyle=cssVar('--chart-tip-bg')||'#2b2b2c'; ctx.strokeStyle=cssVar('--chart-tip-stroke')||'#3c3c3c'; ctx.lineWidth=1; const r=6; ctx.beginPath(); ctx.moveTo(bx+r,by); ctx.lineTo(bx+bw-r,by); ctx.quadraticCurveTo(bx+bw,by,bx+bw,by+r); ctx.lineTo(bx+bw,by+bh-r); ctx.quadraticCurveTo(bx+bw,by+bh,bx+bw-r,by+bh); ctx.lineTo(bx+r,by+bh); ctx.quadraticCurveTo(bx,by+bh,bx,by+bh-r); ctx.lineTo(bx,by+r); ctx.quadraticCurveTo(bx,by,bx+r,by); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle=cssVar('--fg')||'#d4d4d4'; ctx.textAlign='left'; ctx.textBaseline='top'; let ty=by+padBox; tip.forEach(t=>{ ctx.fillText(t,bx+padBox,ty); ty+=14;}); ctx.restore(); }}
-        updateZoomInfo();
-      }
-
-      // ---- UI build ----
-      function rebuildCoreChips(){
-        coreChips.innerHTML=''; if(!parsed) return;
-        Object.keys(parsed.series).forEach((name)=>{
-          const label=(parsed.displayNames&&parsed.displayNames[name])||name;
-          const lab=document.createElement('label'); lab.className='chip';
-          const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=selected.has(name);
-          cb.addEventListener('change',()=>{ if(cb.checked) selected.add(name); else selected.delete(name); draw(); });
-          const dot=document.createElement('span'); dot.className='swatch'; dot.style.backgroundColor=colorOf(name);
-          const span=document.createElement('span'); span.textContent=label;
-          lab.appendChild(cb); lab.appendChild(dot); lab.appendChild(span);
-          coreChips.appendChild(lab);
+  /* Directory picker — lists all CSV in chosen folder */
+  async function openDirectory(dirHandle) {
+    S.lastDir = dirHandle;
+    DirStore.save(dirHandle);  /* persist for next session */
+    S.entries = [];
+    for await (const ent of dirHandle.values()) {
+      if (ent.kind === 'file' && ent.name.toLowerCase().endsWith('.csv')) {
+        const f = await ent.getFile();
+        S.entries.push({
+          handle: ent, name: ent.name,
+          lastModified: f.lastModified || 0, label: ent.name,
         });
       }
+    }
+    S.entries.sort((a, b) => b.lastModified - a.lastModified);
+    buildLogSel();
+    if (S.entries.length) {
+      await loadEntry(S.entries[0]);
+    } else {
+      dom.txtErr.textContent = '資料夾內無 .csv 檔案';
+    }
+  }
 
-      function rebuildSelect(){
-        selLog.innerHTML=''; if(!fileEntries.length){ const o=document.createElement('option'); o.value=''; o.textContent='尚未選擇檔案'; selLog.appendChild(o); selLog.disabled=true; return; }
-        fileEntries.forEach((e,i)=>{ const o=document.createElement('option'); o.value=String(i); o.textContent=e.label; if(i===0) o.selected=true; selLog.appendChild(o); }); selLog.disabled=false;
+  dom.btnDir.addEventListener('click', async () => {
+    dom.txtErr.textContent = '';
+    try {
+      if (window.showDirectoryPicker) {
+        const opts = { id: PICKER_ID };
+        if (S.lastDir) opts.startIn = S.lastDir;
+        const dir = await window.showDirectoryPicker(opts);
+        await openDirectory(dir);
+      } else {
+        dom.dirIn.click();
       }
+    } catch (e) {
+      if (e?.name !== 'AbortError') dom.txtErr.textContent = '⚠ ' + (e?.message || e);
+    }
+  });
+  dom.dirIn.addEventListener('change', async () => {
+    const files = [...(dom.dirIn.files || [])].filter(f => f.name.toLowerCase().endsWith('.csv'));
+    if (!files.length) { dom.txtErr.textContent = '資料夾內無 .csv'; return; }
+    S.entries = files.map(f => ({
+      handle: { getFile: async () => f },
+      name: f.name, lastModified: f.lastModified || 0, label: f.name,
+    })).sort((a, b) => b.lastModified - a.lastModified);
+    buildLogSel();
+    await loadEntry(S.entries[0]);
+  });
 
-      // ---- Load ----
-      async function loadEntry(entry, opts={}){
-        const {preserve=false, silent=false}=opts; txtErr.textContent='';
-        try{
-          const file=await entry.handle.getFile(); const text=await file.text();
-          const data=parseCsv(text);
-          seriesOrder=Object.keys(data.series); // stable order for colors
-          if(preserve && selected.size){ const keep=new Set([...selected].filter(k=>data.series[k])); selected= keep.size? keep : new Set(Object.keys(data.series)); }
-          else { selected=new Set(Object.keys(data.series)); }
-          parsed=data; 
-          // Reset zoom when loading new file
-          if(!preserve){ zoomStart=0; zoomEnd=null; }
-          rebuildCoreChips(); draw();
-          txtFile.textContent= entry.label||entry.name; txtPts.textContent= data.labels.length;
-          lastEntry=entry;
-        }catch(e){ console.error(e); if(!silent) txtErr.textContent='載入失敗：'+(e?.message||e); }
+  /* Drag & drop */
+  let dropCnt = 0;
+  document.addEventListener('dragenter', e => { e.preventDefault(); dropCnt++; dom.drop.classList.add('show'); });
+  document.addEventListener('dragleave', e => { e.preventDefault(); if (--dropCnt <= 0) { dropCnt = 0; dom.drop.classList.remove('show'); } });
+  document.addEventListener('dragover',  e => e.preventDefault());
+  document.addEventListener('drop', e => {
+    e.preventDefault(); dropCnt = 0; dom.drop.classList.remove('show');
+    if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+  });
+
+  /* Log selector */
+  dom.selLog.addEventListener('change', () => {
+    const i = Number(dom.selLog.value);
+    if (Number.isInteger(i) && S.entries[i]) loadEntry(S.entries[i]);
+  });
+
+  /* Refresh */
+  dom.btnRef.addEventListener('click', () => { if (S.last) loadEntry(S.last, { preserve: true }); });
+
+  /* Precision */
+  dom.selStep.addEventListener('change', () => {
+    const v = parseInt(dom.selStep.value, 10);
+    if (v === 0) { S.autoStep = true; }
+    else { S.autoStep = false; S.step = v; }
+    draw();
+  });
+
+  /* Auto refresh */
+  dom.chkAuto.addEventListener('change', () => setAuto(dom.chkAuto.checked));
+  dom.numSec.addEventListener('change', () => { if (dom.chkAuto.checked) setAuto(true); });
+
+  /* Core selection buttons */
+  dom.btnAll.addEventListener('click', () => {
+    if (!S.parsed) return;
+    S.sel = new Set(S.keys); syncChips(); draw();
+  });
+  dom.btnNone.addEventListener('click', () => {
+    if (!S.parsed) return;
+    S.sel = new Set(); syncChips(); draw();
+  });
+  dom.btnAvg.addEventListener('click', () => {
+    if (!S.parsed || !S.parsed.series[AVG]) return;
+    S.sel = new Set([AVG]); syncChips(); draw();
+  });
+  dom.btnHot.addEventListener('click', () => {
+    if (!S.parsed) return;
+    const keys = highUsageKeys();
+    if (keys.length) { S.sel = new Set(keys); syncChips(); draw(); }
+  });
+
+  /* Zoom buttons */
+  dom.btnZI.addEventListener('click', zoomIn);
+  dom.btnZO.addEventListener('click', zoomOut);
+  dom.btnZR.addEventListener('click', zoomReset);
+
+  /* Canvas interactions */
+  dom.canvas.addEventListener('mousedown', e => {
+    if (!S.parsed) return;
+    const r = dom.canvas.getBoundingClientRect();
+    S.dragX0 = e.clientX - r.left;
+    S.dragX = null; S.dragging = false;
+  });
+
+  dom.canvas.addEventListener('mousemove', e => {
+    if (!S.parsed) return;
+    const r = dom.canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+
+    if (S.dragX0 != null && e.buttons === 1 && Math.abs(mx - S.dragX0) > 5) {
+      S.dragging = true;
+      S.dragX = mx;
+      draw();
+      return;
+    }
+
+    findHover(mx, my);
+    draw();
+  });
+
+  dom.canvas.addEventListener('mouseup', e => {
+    if (!S.parsed) return;
+    if (S.dragging && S.dragX0 != null && S.dragX != null) {
+      const r = dom.canvas.getBoundingClientRect();
+      const pW = r.width - PAD.l - PAD.r;
+      const n = S.parsed.labels.length;
+      const si = clamp(S.zS, 0, n - 1);
+      const ei = S.zE ?? n - 1;
+      const vN = ei - si + 1;
+
+      const x1 = Math.min(S.dragX0, S.dragX);
+      const x2 = Math.max(S.dragX0, S.dragX);
+      const r1 = clamp((x1 - PAD.l) / pW, 0, 1);
+      const r2 = clamp((x2 - PAD.l) / pW, 0, 1);
+      const ns = Math.floor(si + r1 * (vN - 1));
+      const ne = Math.ceil(si + r2 * (vN - 1));
+
+      if (ne - ns >= MIN_ZOOM) {
+        S.zS = clamp(ns, 0, n - 1);
+        S.zE = clamp(ne, 0, n - 1);
       }
+    }
+    S.dragX0 = null; S.dragX = null; S.dragging = false;
+    draw();
+  });
 
-      // ---- Events ----
-      btnPickDir.addEventListener('click', async()=>{
-        txtErr.textContent=''; try{
-          if(!window.showDirectoryPicker){ inputDir.click(); return; }
-          const dir=await window.showDirectoryPicker(); lblDir.textContent=dir.name||'';
-          fileEntries=[]; for await (const ent of dir.values()){ if(ent.kind==='file' && ent.name.toLowerCase().endsWith('.csv')){ const f=await ent.getFile(); fileEntries.push({handle:ent, name:ent.name, lastModified:f.lastModified||0, label:`${ent.name} (${fmtTime(f.lastModified)})`}); }}
-          fileEntries.sort(sortByMtime); rebuildSelect(); if(fileEntries.length) await loadEntry(fileEntries[0]); else txtErr.textContent='資料夾內無 .csv';
-        }catch(e){ if(e?.name==='AbortError') return; txtErr.textContent='讀取資料夾失敗：'+(e?.message||e); }
-      });
+  dom.canvas.addEventListener('mouseleave', () => {
+    S.hKey = null; S.hIdx = null;
+    S.dragX0 = null; S.dragX = null; S.dragging = false;
+    draw();
+  });
 
-      btnPickFiles.addEventListener('click', async()=>{
-        txtErr.textContent=''; try{
-          if(!window.showOpenFilePicker){ inputFiles.click(); return; }
-          const handles=await window.showOpenFilePicker({ multiple:true, types:[{description:'CSV', accept:{'text/csv':['.csv'],'text/plain':['.csv']}}]});
-          fileEntries=[]; for(const h of handles){ const f=await h.getFile(); fileEntries.push({handle:h, name:f.name, lastModified:f.lastModified||0, label:`${f.name} (${fmtTime(f.lastModified)})`}); }
-          fileEntries.sort(sortByMtime);
-          lblFiles.textContent= fileEntries.length? (fileEntries.length===1? fileEntries[0].name : `${fileEntries[0].name} 等 ${fileEntries.length} 檔`) : '';
-          rebuildSelect(); if(fileEntries.length) await loadEntry(fileEntries[0]); else txtErr.textContent='未選取 .csv';
-        }catch(e){ if(e?.name==='AbortError') return; txtErr.textContent='讀取檔案失敗：'+(e?.message||e); }
-      });
+  dom.canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (!S.parsed) return;
+    const r = dom.canvas.getBoundingClientRect();
+    const ratio = clamp((e.clientX - r.left - PAD.l) / (r.width - PAD.l - PAD.r), 0, 1);
+    zoomWheel(ratio, e.deltaY > 0 ? 1 : -1);
+  }, { passive: false });
 
-      inputDir.addEventListener('change', async()=>{
-        try{
-          const files=[...(inputDir.files||[])].filter(f=>f.name.toLowerCase().endsWith('.csv'));
-          if(!files.length){ txtErr.textContent='資料夾內無 .csv'; return; }
-          const rel=(files[0].webkitRelativePath||files[0].name); lblDir.textContent=(rel.split('/')[0]||'(本機)');
-          fileEntries=files.map(f=>({handle:{getFile:async()=>f}, name:f.name, lastModified:f.lastModified||0, label:`${f.name} (${fmtTime(f.lastModified)})`}));
-          fileEntries.sort(sortByMtime); rebuildSelect(); await loadEntry(fileEntries[0]);
-        }catch(e){ txtErr.textContent='讀取資料夾失敗：'+(e?.message||e); }
-      });
+  window.addEventListener('resize', draw);
 
-      inputFiles.addEventListener('change', async()=>{
-        try{
-          const files=[...(inputFiles.files||[])].filter(f=>f.name.toLowerCase().endsWith('.csv'));
-          if(!files.length){ txtErr.textContent='未選取 .csv'; return; }
-          fileEntries=files.map(f=>({handle:{getFile:async()=>f}, name:f.name, lastModified:f.lastModified||0, label:`${f.name} (${fmtTime(f.lastModified)})`}));
-          fileEntries.sort(sortByMtime);
-          lblFiles.textContent= files.length===1? files[0].name : `${files[0].name} 等 ${files.length} 檔`;
-          rebuildSelect(); await loadEntry(fileEntries[0]);
-        }catch(e){ txtErr.textContent='讀取檔案失敗：'+(e?.message||e); }
-      });
-
-      selLog.addEventListener('change',()=>{ const i=Number(selLog.value); if(Number.isInteger(i) && fileEntries[i]) loadEntry(fileEntries[i]); });
-      // Preserve selection on manual refresh
-      btnRefresh.addEventListener('click',()=>{ if(lastEntry) loadEntry(lastEntry,{preserve:true}); });
-      selStep.addEventListener('change',()=>{ const v=parseInt(selStep.value,10); step=Number.isFinite(v)&&v>0?v:1; draw(); });
-      btnAll.addEventListener('click',()=>{ if(!parsed) return; selected=new Set(Object.keys(parsed.series)); rebuildCoreChips(); draw(); });
-      btnNone.addEventListener('click',()=>{ if(!parsed) return; selected=new Set(); rebuildCoreChips(); draw(); });
-      btnAvg.addEventListener('click',()=>{ if(!parsed) return; if(!parsed.series[AVG]) return; selected=new Set([AVG]); rebuildCoreChips(); draw(); });
-
-      // Zoom buttons
-      btnZoomOut.addEventListener('click',()=>{
-        if(!parsed) return;
-        const fullN=parsed.labels.length;
-        if(zoomEnd===null){ return; } // already at full view
-        const currentStart=Math.max(0,zoomStart);
-        const currentEnd=Math.min(fullN-1,zoomEnd);
-        const currentRange=currentEnd-currentStart+1;
-        const newRange=Math.min(fullN, Math.ceil(currentRange*1.5));
-        const center=Math.floor((currentStart+currentEnd)/2);
-        let newStart=Math.max(0, center-Math.floor(newRange/2));
-        let newEnd=Math.min(fullN-1, newStart+newRange-1);
-        // adjust if hit boundary
-        if(newEnd>=fullN-1){ newEnd=fullN-1; newStart=Math.max(0,fullN-newRange); }
-        // if expanded to full view, reset
-        if(newStart===0 && newEnd===fullN-1){ zoomStart=0; zoomEnd=null; }
-        else{ zoomStart=newStart; zoomEnd=newEnd; }
-        draw();
-      });
-
-      btnZoomReset.addEventListener('click',()=>{
-        zoomStart=0; zoomEnd=null; draw();
-      });
-
-      chkAuto.addEventListener('change',()=>{ setAuto(chkAuto.checked); });
-      numSec.addEventListener('change',()=>{ if(chkAuto.checked) setAuto(true); });
-
-      function setAuto(on){
-        if(timer){ clearInterval(timer); timer=null; }
-        if(on){ let s=parseInt(numSec.value,10); if(!Number.isFinite(s)||s<3){ s=3; numSec.value='3'; }
-          timer=setInterval(()=>{ if(lastEntry) loadEntry(lastEntry,{preserve:true, silent:true}); }, s*1000);
-          txtAuto.textContent=`開啟，每 ${numSec.value} 秒`; dotAuto.classList.remove('off','err'); dotAuto.classList.add('ok');
-        } else { txtAuto.textContent='關閉'; dotAuto.classList.remove('ok','err'); dotAuto.classList.add('off'); }
-      }
-
-      // Hover interactions + drag to zoom
-      canvas.addEventListener('mousedown',(e)=>{
-        if(!parsed) return; const rect=canvas.getBoundingClientRect(); dragStart={x:e.clientX-rect.left, y:e.clientY-rect.top}; dragEnd=null;
-      });
-      canvas.addEventListener('mousemove', (e)=>{
-        if(!parsed){ return; }
-        const rect=canvas.getBoundingClientRect(); const mx=e.clientX-rect.left; const my=e.clientY-rect.top;
-        const cw=rect.width, ch=rect.height; const pad={t:30,r:20,b:40,l:55}; const w=cw-pad.l-pad.r, h=ch-pad.t-pad.b;
-        // Dragging to select range
-        if(dragStart && e.buttons===1){ dragEnd={x:mx,y:my}; draw(); return; }
-        // Hover for tooltip
-        const fullN=parsed.labels.length; const startIdx=Math.max(0,zoomStart); const endIdx=zoomEnd!=null?Math.min(fullN-1,zoomEnd):fullN-1;
-        const n=endIdx-startIdx+1; if(!n) return; const xstep=n>1? w/(n-1):w; const X=i=> pad.l+(i-startIdx)*xstep;
-        const vis=[...(selected.size? Object.entries(parsed.series).filter(([k])=>selected.has(k)) : Object.entries(parsed.series))];
-        if(!vis.length) { hoverName=null; hoverIndex=null; draw(); return; }
-        let min=Infinity,max=-Infinity; vis.forEach(([,arr])=>{ for(let i=startIdx;i<=endIdx;i++){ const v=arr[i]; if(v==null||!Number.isFinite(v)) continue; if(v<min)min=v; if(v>max)max=v; }});
-        if(!Number.isFinite(min)||!Number.isFinite(max)) return; const range=max-min||1; min-=range*.1; max+=range*.1; const Y=v=> pad.t+h-((v-min)/(max-min))*h;
-        let bestD=Infinity, bestName=null, bestI=null;
-        vis.forEach(([name,arr])=>{ for(let i=startIdx;i<=endIdx;i++){ const v=arr[i]; if(v==null) continue; const dx=X(i)-mx, dy=Y(v)-my; const d=Math.hypot(dx,dy); if(d<bestD){ bestD=d; bestName=name; bestI=i; }} });
-        if(bestD<=16){ hoverName=bestName; hoverIndex=bestI; } else { hoverName=null; hoverIndex=null; }
-        draw();
-      });
-      canvas.addEventListener('mouseup',(e)=>{
-        if(!parsed||!dragStart) return;
-        const rect=canvas.getBoundingClientRect(); const mx=e.clientX-rect.left; const pad={l:55}; const w=rect.width-55-20;
-        if(Math.abs(mx-dragStart.x)>10){ 
-          const fullN=parsed.labels.length; 
-          const startIdx=Math.max(0,zoomStart); 
-          const endIdx=zoomEnd!=null?Math.min(fullN-1,zoomEnd):fullN-1; 
-          const n=endIdx-startIdx+1; 
-          const xstep=n>1?w/(n-1):w;
-          const idx1=Math.floor((Math.min(dragStart.x,mx)-pad.l)/xstep)+startIdx; 
-          const idx2=Math.floor((Math.max(dragStart.x,mx)-pad.l)/xstep)+startIdx;
-          const s=Math.max(0,Math.min(idx1,idx2)); 
-          const e=Math.min(fullN-1,Math.max(idx1,idx2)); 
-          if(e>s){ zoomStart=s; zoomEnd=e; }
-        }
-        dragStart=null; dragEnd=null; draw();
-      });
-      canvas.addEventListener('mouseleave', ()=>{ hoverName=null; hoverIndex=null; dragStart=null; dragEnd=null; draw(); });
-      window.addEventListener('resize', draw);
-
-      // init
-      setAuto(false); step=1; draw();
-    </script>
-  </body>
+  /* ═══════════════════════════════════════
+     Init
+     ═══════════════════════════════════════ */
+  setAuto(false);
+  requestAnimationFrame(draw);
+  </script>
+</body>
 </html>
